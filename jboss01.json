@@ -1,0 +1,469 @@
+{
+    "kind": "Template",
+    "apiVersion": "v1",
+    "metadata": {
+        "annotations": {
+            "description": "Application template Coolstore Monolith using binary build.",
+            "iconClass": "icon-jboss",
+            "tags": "eap,postgresql,javaee,java,database,jboss,xpaas",
+            "version": "1.0.0",
+            "openshift.io/display-name": "Coolstore Monolith using binary build"
+        },
+        "name": "coolstore-monolith-binary-build"
+    },
+    "labels": {
+        "template": "coolstore-monolith-binary-build"
+    },
+    "message": "The resources (build config, deploy config, service, imagestreams, etc) for running the Coolstore Monolith demo has been created in your project. To deploy the application go to your source directoy and build that code using mvn -Popenshift package and then start the build using oc start-build coolstore --from-file=deployments/ROOT.war.",
+    "parameters": [
+        {
+            "displayName": "ImageStream Namespace",
+            "description": "Namespace in which the ImageStreams for Red Hat Middleware images are installed. These ImageStreams are normally installed in the openshift namespace. You should only need to modify this if you've installed the ImageStreams in a different namespace/project.",
+            "name": "IMAGE_STREAM_NAMESPACE",
+            "value": "openshift",
+            "required": true
+        }
+    ],
+    "objects": [
+        {
+            "kind": "Service",
+            "apiVersion": "v1",
+            "spec": {
+                "ports": [{
+                    "port": 8080,
+                    "targetPort": 8080
+                }],
+                "selector": {
+                    "deploymentConfig": "coolstore"
+                }
+            },
+            "metadata": {
+                "name": "coolstore",
+                "labels": {
+                    "application": "coolstore"
+                },
+                "annotations": {
+                    "description": "The web server's http port.",
+                    "service.alpha.openshift.io/dependencies": "[{\"name\":\"coolstore-postgresql\",\"namespace\":\"\",\"kind\":\"Service\"}]"
+                }
+            }
+        },
+        {
+            "kind": "Service",
+            "apiVersion": "v1",
+            "spec": {
+                "ports": [{
+                    "port": 5432,
+                    "targetPort": 5432
+                }],
+                "selector": {
+                    "deploymentConfig": "coolstore-postgresql"
+                }
+            },
+            "metadata": {
+                "name": "coolstore-postgresql",
+                "labels": {
+                    "application": "coolstore"
+                },
+                "annotations": {
+                    "description": "The database server's port."
+                }
+            }
+        },
+        {
+            "kind": "Route",
+            "apiVersion": "v1",
+            "id": "coolstore-http",
+            "metadata": {
+                "name": "www",
+                "labels": {
+                    "application": "coolstore"
+                },
+                "annotations": {
+                    "description": "Route for application's http service."
+                }
+            },
+            "spec": {
+                "to": {
+                    "name": "coolstore"
+                }
+            }
+        },
+        {
+            "kind": "ImageStream",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "coolstore",
+                "labels": {
+                    "application": "coolstore",
+                    "build": "coolstore"
+                }
+            }
+        },
+        {
+            "kind": "BuildConfig",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "coolstore",
+                "labels": {
+                    "application": "coolstore"
+                }
+            },
+            "spec": {
+                "source": {
+                    "type": "Binary",
+                    "binary": {}
+                },
+                "strategy": {
+                    "type": "Source",
+                    "sourceStrategy": {
+                        "from": {
+                            "kind": "ImageStreamTag",
+                            "namespace": "${IMAGE_STREAM_NAMESPACE}",
+                            "name": "jboss-eap72-openshift:1.1"
+                        }
+                    }
+                },
+                "output": {
+                    "to": {
+                        "kind": "ImageStreamTag",
+                        "name": "coolstore:latest"
+                    }
+                }
+            }
+        },
+        {
+            "kind": "DeploymentConfig",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "coolstore",
+                "labels": {
+                    "application": "coolstore"
+                }
+            },
+            "spec": {
+                "strategy": {
+                    "type": "Recreate",
+                    "resources": {}
+                },
+                "triggers": [{
+                        "type": "ImageChange",
+                        "imageChangeParams": {
+                            "automatic": true,
+                            "containerNames": [
+                                "coolstore"
+                            ],
+                            "from": {
+                                "kind": "ImageStreamTag",
+                                "name": "coolstore:latest"
+                            }
+                        }
+                    },
+                    {
+                        "type": "ConfigChange"
+                    }
+                ],
+                "replicas": 1,
+                "selector": {
+                    "deploymentConfig": "coolstore"
+                },
+                "template": {
+                    "metadata": {
+                        "name": "coolstore",
+                        "labels": {
+                            "deploymentConfig": "coolstore",
+                            "application": "coolstore"
+                        }
+                    },
+                    "spec": {
+                        "serviceAccountName": "coolstore-serviceaccount",
+                        "terminationGracePeriodSeconds": 75,
+                        "containers": [{
+                            "name": "coolstore",
+                            "image": "coolstore",
+                            "imagePullPolicy": "Always",
+                            "volumeMounts": [{
+                                    "name": "eap-keystore-volume",
+                                    "mountPath": "/etc/eap-secret-volume",
+                                    "readOnly": true
+                                },
+                                {
+                                    "name": "eap-jgroups-keystore-volume",
+                                    "mountPath": "/etc/jgroups-encrypt-secret-volume",
+                                    "readOnly": true
+                                }
+                            ],
+                            "lifecycle": {
+                                "preStop": {
+                                    "exec": {
+                                        "command": [
+                                            "/opt/eap/bin/jboss-cli.sh",
+                                            "-c",
+                                            ":shutdown(timeout=60)"
+                                        ]
+                                    }
+                                }
+                            },
+                            "livenessProbe": {
+                                "exec": {
+                                    "command": [
+                                        "/bin/bash",
+                                        "-c",
+                                        "/opt/eap/bin/livenessProbe.sh"
+                                    ]
+                                }
+                            },
+                            "readinessProbe": {
+                                "httpGet": {
+                                    "path": "/health.jsp",
+                                    "port": 8080,
+                                    "scheme": "HTTP"
+                                },
+                                "timeoutSeconds": 1,
+                                "periodSeconds": 20,
+                                "successThreshold": 1,
+                                "failureThreshold": 5
+                            },
+                            "ports": [{
+                                    "name": "jolokia",
+                                    "containerPort": 8778,
+                                    "protocol": "TCP"
+                                },
+                                {
+                                    "name": "http",
+                                    "containerPort": 8080,
+                                    "protocol": "TCP"
+                                },
+                                {
+                                    "name": "https",
+                                    "containerPort": 8443,
+                                    "protocol": "TCP"
+                                },
+                                {
+                                    "name": "ping",
+                                    "containerPort": 8888,
+                                    "protocol": "TCP"
+                                }
+                            ],
+                            "env": [
+                                {
+                                    "name": "DB_SERVICE_PREFIX_MAPPING",
+                                    "value": "coolstore-postgresql=DB"
+                                },
+                                {
+                                    "name": "DB_JNDI",
+                                    "value": "java:jboss/datasources/CoolstoreDS"
+                                },
+                                {
+                                    "name": "DB_USERNAME",
+                                    "value": "coolstore"
+                                },
+                                {
+                                    "name": "DB_PASSWORD",
+                                    "value": "coolstore123"
+                                },
+                                {
+                                    "name": "DB_DATABASE",
+                                    "value": "monolith"
+                                },
+                                {
+                                    "name": "TX_DATABASE_PREFIX_MAPPING",
+                                    "value": "coolstore-postgresql=DB"
+                                },
+                                {
+                                    "name": "MQ_TOPICS",
+                                    "value": "orders"
+                                },
+                                {
+                                    "name": "OPENSHIFT_KUBE_PING_LABELS",
+                                    "value": "application=coolstore"
+                                },
+                                {
+                                    "name": "OPENSHIFT_KUBE_PING_NAMESPACE",
+                                    "valueFrom": {
+                                        "fieldRef": {
+                                            "fieldPath": "metadata.namespace"
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "HTTPS_KEYSTORE_DIR",
+                                    "value": "/etc/eap-secret-volume"
+                                },
+                                {
+                                    "name": "HTTPS_KEYSTORE",
+                                    "value": "keystore.jks"
+                                },
+                                {
+                                    "name": "HTTPS_KEYSTORE_TYPE",
+                                    "value": "JKS"
+                                },
+                                {
+                                    "name": "HTTPS_NAME",
+                                    "value": "jboss"
+                                },
+                                {
+                                    "name": "HTTPS_PASSWORD",
+                                    "value": "mykeystorepass"
+                                },
+                                {
+                                    "name": "MQ_CLUSTER_PASSWORD",
+                                    "value": "coolstore123"
+                                },
+                                {
+                                    "name": "JGROUPS_ENCRYPT_SECRET",
+                                    "value": "coolstore-secret"
+                                },
+                                {
+                                    "name": "JGROUPS_ENCRYPT_KEYSTORE_DIR",
+                                    "value": "/etc/jgroups-encrypt-secret-volume"
+                                },
+                                {
+                                    "name": "JGROUPS_ENCRYPT_KEYSTORE",
+                                    "value": "jgroups.jceks"
+                                },
+                                {
+                                    "name": "JGROUPS_ENCRYPT_NAME",
+                                    "value": "secret-key"
+                                },
+                                {
+                                    "name": "JGROUPS_ENCRYPT_PASSWORD",
+                                    "value": "password"
+                                },
+                                {
+                                    "name": "JGROUPS_CLUSTER_PASSWORD",
+                                    "value": "openshift123"
+                                },
+                                {
+                                    "name": "DEFAULT_JOB_REPOSITORY",
+                                    "value": "coolstore-postgresql"
+                                },
+                                {
+                                    "name": "TIMER_SERVICE_DATA_STORE",
+                                    "value": "coolstore-postgresql"
+                                }
+                            ]
+                        }],
+                        "volumes": [{
+                                "name": "eap-keystore-volume",
+                                "secret": {
+                                    "secretName": "coolstore-secret"
+                                }
+                            },
+                            {
+                                "name": "eap-jgroups-keystore-volume",
+                                "secret": {
+                                    "secretName": "coolstore-secret"
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "kind": "DeploymentConfig",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "coolstore-postgresql",
+                "labels": {
+                    "application": "coolstore"
+                }
+            },
+            "spec": {
+                "strategy": {
+                    "type": "Recreate"
+                },
+                "triggers": [{
+                        "type": "ImageChange",
+                        "imageChangeParams": {
+                            "automatic": true,
+                            "containerNames": [
+                                "coolstore-postgresql"
+                            ],
+                            "from": {
+                                "kind": "ImageStreamTag",
+                                "namespace": "${IMAGE_STREAM_NAMESPACE}",
+                                "name": "postgresql:9.6"
+                            }
+                        }
+                    },
+                    {
+                        "type": "ConfigChange"
+                    }
+                ],
+                "replicas": 1,
+                "selector": {
+                    "deploymentConfig": "coolstore-postgresql"
+                },
+                "template": {
+                    "metadata": {
+                        "name": "coolstore-postgresql",
+                        "labels": {
+                            "deploymentConfig": "coolstore-postgresql",
+                            "application": "coolstore"
+                        }
+                    },
+                    "spec": {
+                        "terminationGracePeriodSeconds": 60,
+                        "containers": [{
+                            "name": "coolstore-postgresql",
+                            "image": "postgresql",
+                            "imagePullPolicy": "Always",
+                            "readinessProbe": {
+                                "exec": {
+                                    "command": [
+                                        "/bin/sh",
+                                        "-i",
+                                        "-c",
+                                        "psql -h 127.0.0.1 -U $POSTGRESQL_USER -q -d $POSTGRESQL_DATABASE -c 'SELECT 1'"
+                                    ]
+                                },
+                                "initialDelaySeconds": 5,
+                                "timeoutSeconds": 1,
+                                "periodSeconds": 10,
+                                "successThreshold": 1,
+                                "failureThreshold": 3
+                            },
+                            "livenessProbe": {
+                                "tcpSocket": {
+                                    "port": 5432
+                                },
+                                "initialDelaySeconds": 30,
+                                "timeoutSeconds": 1,
+                                "periodSeconds": 10,
+                                "successThreshold": 1,
+                                "failureThreshold": 3
+                            },
+                            "ports": [{
+                                "containerPort": 5432,
+                                "protocol": "TCP"
+                            }],
+                            "env": [{
+                                    "name": "POSTGRESQL_USER",
+                                    "value": "coolstore"
+                                },
+                                {
+                                    "name": "POSTGRESQL_PASSWORD",
+                                    "value": "coolstore123"
+                                },
+                                {
+                                    "name": "POSTGRESQL_DATABASE",
+                                    "value": "monolith"
+                                },
+                                {
+                                    "name": "POSTGRESQL_MAX_CONNECTIONS",
+                                    "value": "100"
+                                },
+                                {
+                                    "name": "POSTGRESQL_MAX_PREPARED_TRANSACTIONS",
+                                    "value": "100"
+                                }
+                            ] 
+                        }]
+                    }
+                }
+            }
+        }
+    ]
+}
